@@ -1,0 +1,278 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Parking Finder – GPS + Free/Paid</title>
+  <!-- Leaflet CSS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+  <style>
+    :root{--bg:#0b1220;--card:#121a2b;--text:#eaf1ff;--muted:#a7b0c3;--accent:#00d1ff;--ok:#2bd576;--warn:#ffb020;--danger:#ff5978;}
+    *{box-sizing:border-box}
+    body{margin:0;font-family:Inter,system-ui,Segoe UI,Roboto,Arial,sans-serif;background:linear-gradient(180deg,#0b1220,#0f1630);color:var(--text)}
+    header{padding:14px 18px;border-bottom:1px solid #263045;display:flex;gap:12px;align-items:center;justify-content:space-between;position:sticky;top:0;background:#0c1325;z-index:10}
+    header h1{font-size:18px;margin:0;letter-spacing:.3px}
+    #app{display:grid;grid-template-columns:360px 1fr;gap:14px;padding:14px;min-height:calc(100vh - 60px)}
+    @media (max-width: 980px){#app{grid-template-columns:1fr} #map{height:60vh}}
+    .panel{background:var(--card);border:1px solid #24314a;border-radius:16px;padding:14px}
+    .controls{display:grid;gap:10px}
+    label.small{font-size:12px;color:var(--muted)}
+    .row{display:flex;gap:8px;align-items:center;flex-wrap:wrap}
+    input,select,button{border-radius:12px;border:1px solid #2a3a5c;background:#0e172b;color:var(--text);padding:10px 12px}
+    input[type="range"]{width:150px}
+    button.primary{background:linear-gradient(90deg,#15b9ff,#00e1c6);border:none;color:#00131b;font-weight:600}
+    button.ghost{background:transparent;border:1px solid #2a3a5c}
+    .tag{padding:2px 8px;border-radius:999px;font-size:12px;border:1px solid #2a3a5c;color:var(--muted)}
+    .list{display:grid;gap:10px;margin-top:8px;max-height:48vh;overflow:auto}
+    .card{background:#0e172b;border:1px solid #24314a;border-radius:14px;padding:12px;display:grid;gap:8px}
+    .title{font-weight:600}
+    .muted{color:var(--muted)}
+    .price{font-weight:700}
+    .free{color:var(--ok)}
+    #map{height:calc(100vh - 88px);border:1px solid #24314a;border-radius:16px}
+    .footer{font-size:12px;color:var(--muted);padding-top:6px}
+    .pill{display:inline-flex;align-items:center;gap:6px;padding:4px 10px;border:1px solid #2a3a5c;border-radius:999px}
+    .sep{opacity:.35}
+  </style>
+</head>
+<body>
+  <header>
+    <h1>🚗 Parking Finder — GPS + Free/Paid</h1>
+    <div class="row">
+      <button id="locate" class="primary">Use My GPS</button>
+      <button id="addSpot" class="ghost">Add Spot</button>
+      <span id="status" class="tag">waiting for location…</span>
+    </div>
+  </header>
+
+  <div id="app">
+    <aside class="panel">
+      <div class="controls">
+        <div class="row">
+          <div class="pill">
+            <label class="small">Radius</label>
+            <select id="radius">
+              <option value="0.75">750 m</option>
+              <option value="1.5" selected>1.5 km</option>
+              <option value="3">3 km</option>
+              <option value="5">5 km</option>
+            </select>
+          </div>
+          <div class="pill">
+            <label class="small">Max price</label>
+            <input type="range" id="maxPrice" min="0" max="300" value="120" step="10"/>
+            <span id="maxPriceVal" class="small">₹120/hr</span>
+          </div>
+          <div class="pill">
+            <input type="checkbox" id="freeOnly"/>
+            <label for="freeOnly">Free only</label>
+          </div>
+        </div>
+        <div class="row">
+          <select id="sort">
+            <option value="distance">Sort: Distance</option>
+            <option value="price">Sort: Price</option>
+            <option value="availability">Sort: Availability</option>
+          </select>
+          <input id="query" placeholder="Search area or landmark (optional)"/>
+          <button id="search" class="ghost">Search</button>
+        </div>
+      </div>
+
+      <div class="list" id="list"></div>
+      <div class="footer">Tip: Click a card to focus on the map. “Navigate” opens Google Maps for turn‑by‑turn.</div>
+    </aside>
+
+    <main class="panel">
+      <div id="map"></div>
+    </main>
+  </div>
+
+  <!-- Leaflet JS -->
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  <script>
+    // --- Mock dataset (replace with your API later) ---
+    const spots = [
+      { id: 1, name: "Metro Mall Basement", lat: 28.6289, lng: 77.2796, price: 40, free:false, available: 12, address: "Near Metro Station" },
+      { id: 2, name: "Community Center Lot", lat: 28.6315, lng: 77.2847, price: 0, free:true, available: 4, address: "Park road" },
+      { id: 3, name: "Hospital Multilevel", lat: 28.6238, lng: 77.2920, price: 80, free:false, available: 35, address: "Block C" },
+      { id: 4, name: "Street Parking Zone A", lat: 28.6371, lng: 77.2740, price: 0, free:true, available: 7, address: "Opp. Market" },
+      { id: 5, name: "IT Tower Visitor", lat: 28.6412, lng: 77.3001, price: 120, free:false, available: 18, address: "Gate 2" },
+      { id: 6, name: "Stadium Ring Road", lat: 28.6191, lng: 77.2708, price: 30, free:false, available: 10, address: "Sector 9" },
+    ];
+
+    // --- Map init ---
+    const map = L.map('map');
+    const osm = L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      attribution: '&copy; OpenStreetMap contributors'
+    }).addTo(map);
+
+    let userMarker = null;
+    let parkingLayer = L.layerGroup().addTo(map);
+
+    const statusEl = document.getElementById('status');
+    const listEl = document.getElementById('list');
+    const freeOnly = document.getElementById('freeOnly');
+    const maxPrice = document.getElementById('maxPrice');
+    const maxPriceVal = document.getElementById('maxPriceVal');
+    const radiusSel = document.getElementById('radius');
+    const sortSel = document.getElementById('sort');
+
+    maxPrice.addEventListener('input', ()=>{maxPriceVal.textContent = `₹${maxPrice.value}/hr`; render();});
+    freeOnly.addEventListener('change', render);
+    radiusSel.addEventListener('change', render);
+    sortSel.addEventListener('change', render);
+
+    document.getElementById('locate').addEventListener('click', locateMe);
+    document.getElementById('addSpot').addEventListener('click', addSpotPrompt);
+    document.getElementById('search').addEventListener('click', ()=>{
+      const q = document.getElementById('query').value.trim();
+      if(!q) return;
+      // use Nominatim without API key for geocoding
+      fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${encodeURIComponent(q)}`)
+        .then(r=>r.json())
+        .then(rows=>{
+          if(rows && rows[0]){
+            const {lat, lon} = rows[0];
+            map.setView([parseFloat(lat), parseFloat(lon)], 15);
+          }
+        })
+        .catch(()=>{});
+    });
+
+    function addSpotPrompt(){
+      const name = prompt('Spot name?'); if(!name) return;
+      const price = Number(prompt('Price per hour (0 for free)?')); if(isNaN(price)) return;
+      const free = price === 0;
+      const available = Number(prompt('Available slots?')||'0');
+      const center = map.getCenter();
+      const newSpot = { id: Date.now(), name, lat:center.lat, lng:center.lng, price, free, available, address:'(dropped on map center)'};
+      spots.push(newSpot);
+      render();
+      alert('Spot added at map center. Move map and add again to drop elsewhere.');
+    }
+
+    // Haversine distance (km)
+    function distanceKm(a, b){
+      const toRad = d=>d*Math.PI/180;
+      const R = 6371;
+      const dLat = toRad(b.lat - a.lat);
+      const dLng = toRad(b.lng - a.lng);
+      const lat1 = toRad(a.lat), lat2 = toRad(b.lat);
+      const h = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLng/2)**2;
+      return 2*R*Math.asin(Math.sqrt(h));
+    }
+
+    let userLoc = {lat:28.6304, lng:77.2810}; // default center (change to your city)
+    map.setView([userLoc.lat, userLoc.lng], 14);
+    putUserMarker();
+    render();
+
+    function locateMe(){
+      if(!navigator.geolocation){
+        statusEl.textContent = 'Geolocation not supported';
+        return;
+      }
+      statusEl.textContent = 'Locating…';
+      navigator.geolocation.getCurrentPosition((pos)=>{
+        userLoc = {lat: pos.coords.latitude, lng: pos.coords.longitude};
+        map.setView([userLoc.lat, userLoc.lng], 15);
+        putUserMarker();
+        render();
+        statusEl.textContent = `📍 ${userLoc.lat.toFixed(4)}, ${userLoc.lng.toFixed(4)}`;
+      }, (err)=>{
+        statusEl.textContent = 'Location denied – using default';
+      }, {enableHighAccuracy:true, timeout:8000, maximumAge:0});
+    }
+
+    function putUserMarker(){
+      if(userMarker) userMarker.remove();
+      userMarker = L.marker([userLoc.lat, userLoc.lng], {title:'You'}).addTo(map).bindPopup('You are here');
+    }
+
+    function render(){
+      parkingLayer.clearLayers();
+      const radKm = parseFloat(radiusSel.value);
+      const maxP = parseFloat(maxPrice.value);
+
+      let filtered = spots.filter(s=>{
+        const d = distanceKm(userLoc, {lat:s.lat, lng:s.lng});
+        s._distance = d;
+        return d <= radKm && (freeOnly.checked ? s.free : true) && (s.free || s.price <= maxP);
+      });
+
+      const sort = sortSel.value;
+      filtered.sort((a,b)=>{
+        if(sort==='price') return (a.free?0:a.price) - (b.free?0:b.price);
+        if(sort==='availability') return b.available - a.available;
+        return a._distance - b._distance;
+      });
+
+      // List UI
+      listEl.innerHTML = '';
+      filtered.forEach(s=>{
+        const card = document.createElement('div');
+        card.className = 'card';
+        card.innerHTML = `
+          <div class="row" style="justify-content:space-between;align-items:flex-start;gap:8px">
+            <div>
+              <div class="title">${s.name}</div>
+              <div class="muted">${s.address}</div>
+              <div class="muted">${s._distance.toFixed(2)} km away</div>
+            </div>
+            <div class="price">${s.free ? '<span class="free">Free</span>' : '₹'+s.price+'/hr'}</div>
+          </div>
+          <div class="row" style="justify-content:space-between">
+            <span class="tag">Available: ${s.available}</span>
+            <div class="row">
+              <button class="ghost" data-nav="${s.id}">Navigate</button>
+              <button class="primary" data-book="${s.id}">Book</button>
+            </div>
+          </div>`;
+        card.addEventListener('click', ()=>focusSpot(s));
+        listEl.appendChild(card);
+      });
+
+      // Map markers
+      filtered.forEach(s=>{
+        const marker = L.marker([s.lat, s.lng]).addTo(parkingLayer);
+        const priceText = s.free ? '<b style="color:#2bd576">Free</b>' : `₹${s.price}/hr`;
+        marker.bindPopup(`<b>${s.name}</b><br>${s.address}<br>${priceText}<br>${s._distance.toFixed(2)} km away`);
+        marker.on('click', ()=>focusSpot(s));
+      });
+
+      // Buttons events (delegate)
+      listEl.querySelectorAll('button[data-nav]').forEach(btn=>{
+        btn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          const id = Number(btn.getAttribute('data-nav'));
+          const s = filtered.find(x=>x.id===id);
+          if(!s) return;
+          const url = `https://www.google.com/maps/dir/?api=1&destination=${s.lat},${s.lng}`;
+          window.open(url, '_blank');
+        });
+      });
+      listEl.querySelectorAll('button[data-book]').forEach(btn=>{
+        btn.addEventListener('click', (e)=>{
+          e.stopPropagation();
+          const id = Number(btn.getAttribute('data-book'));
+          const s = filtered.find(x=>x.id===id);
+          if(!s) return;
+          if(s.available>0){
+            s.available -= 1;
+            alert(`Booked 1 slot at ${s.name}. Enjoy!`);
+            render();
+          }else{
+            alert('No slots left at this spot.');
+          }
+        });
+      });
+    }
+
+    function focusSpot(s){
+      map.setView([s.lat, s.lng], 17, {animate:true});
+    }
+  </script>
+</body>
+</html>
